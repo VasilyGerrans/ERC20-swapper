@@ -34,7 +34,7 @@ contract Swapper {
             _amountOutMin, 
             path, 
             address(this),
-            block.timestamp + 10 // valid for only 10 seconds
+            block.timestamp
         );
 
         amountOut = IERC20(_tokenOut).balanceOf(address(this));
