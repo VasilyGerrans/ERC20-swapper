@@ -14,13 +14,29 @@ contract Swapper {
         require(_routerAddresses.length == _defaultPaths.length, "Swapper: Every router must have a path");
         parent = _parentAddress;
         for (uint256 i = 0; i < _routerAddresses.length; i++) {
-            addRouter(_routerAddresses[i], _defaultPaths[i]);
+            routers.push(IUniswapV2Router02(_routerAddresses[i]));
+            routerPaths[_routerAddresses[i]] = _defaultPaths[i];
         }
     }
 
     modifier onlyParent {
         require(msg.sender == parent, "Swapper: Only parent can call this function");
         _;
+    }
+
+    modifier routerExists(address router) {
+        bool exists = false;
+        for (uint256 i = 0; i < routers.length; i++) {
+            if (routers[i] == IUniswapV2Router02(router)) {
+                exists = true;
+                _;
+            }
+        }
+        require(exists == true, "Swapper: Requested router does not exist");
+    }
+
+    function getRoutersQuantity() external view returns(uint256) {
+        return routers.length;
     }
 
     function addRouter(address routerAddress, address[] memory defaultPath) public onlyParent {
@@ -68,6 +84,8 @@ contract Swapper {
         uint256 _amountOutMin
     ) external onlyParent returns(uint256) {
         (IUniswapV2Router02 router, uint256 amountOut, address[] memory path) = findOptimalRouter(_amountIn);
+
+        require(amountOut >= _amountOutMin, "Swapper: Insufficient amountOut");
         
         IERC20(path[0]).transferFrom(msg.sender, address(this), _amountIn);
         IERC20(path[0]).approve(address(router), _amountIn);
@@ -75,10 +93,38 @@ contract Swapper {
             _amountIn, 
             _amountOutMin, 
             path, 
-            parent, // send funds directly to parent; parent must calculate amountOut itself
+            parent,
             block.timestamp
         );
 
         return amountOut;
+    }
+
+    function swapViaRouter(
+        address _routerAddress,
+        uint256 _amountIn,
+        uint256 _amountOutMin
+    ) 
+        external 
+        onlyParent 
+        routerExists(_routerAddress) 
+        returns(uint256 amountOut) 
+    {
+        address[] memory path = routerPaths[address(_routerAddress)]; 
+        IUniswapV2Router02 router = IUniswapV2Router02(_routerAddress);
+        uint256[] memory amountsOut = router.getAmountsOut(_amountIn, path); 
+        amountOut = amountsOut[amountsOut.length - 1];
+
+        require(amountOut >= _amountOutMin);
+
+        IERC20(path[0]).transferFrom(msg.sender, address(this), _amountIn);
+        IERC20(path[0]).approve(_routerAddress, _amountIn);
+        router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            _amountIn, 
+            _amountOutMin, 
+            path, 
+            parent,
+            block.timestamp
+        );
     }
 }
