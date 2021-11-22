@@ -4,13 +4,12 @@ const Web3 = require("web3");
 const abi = require("./ERC20ABI.json");
 
 describe("Swapper", function () {
-  let parent, whale, Swapper, swapper, WMATIC, WBTC;
+  let whale, Swapper, swapper, WMATIC, WBTC;
   let whaleAddress = "0x01aeFAC4A308FbAeD977648361fBAecFBCd380C7"; // big boy on Polygon
   let sushiRouter = "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506";
   let amount = Web3.utils.toWei("1000", "ether");
 
   beforeEach(async () => {
-    [parent, _] = await ethers.getSigners();
     Swapper = await ethers.getContractFactory("Swapper");
     swapper = await Swapper.deploy(whaleAddress, sushiRouter); // set whale as parent
     await hre.network.provider.request({
@@ -38,6 +37,17 @@ describe("Swapper", function () {
       expect(initialWMATICBalance.gt(finalWMATICBalance));
       expect(initialWBTCBalance.lt(finalWBTCBalance));
       expect(initialWMATICBalance.sub(finalWMATICBalance).toString()).to.be.equal(amount);
+    });
+
+    it("should leave no remaining funds in the swapper contract", async () => {
+      await WMATIC.connect(whale).approve(swapper.address, amount);
+      await swapper.connect(whale).swap(WMATIC.address, WBTC.address, amount, 0);
+
+      const finalSwapperWMATICBalance = await WMATIC.balanceOf(swapper.address);
+      const finalSwapperWBTCBalance = await WBTC.balanceOf(swapper.address);
+
+      expect(finalSwapperWMATICBalance.toString()).to.be.equal("0");
+      expect(finalSwapperWBTCBalance.toString()).to.be.equal("0");
     });
   });
 });
