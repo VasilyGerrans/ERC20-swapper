@@ -31,7 +31,6 @@ describe("Swapper", function () {
   });
   
   describe("Swapper.sol", async () => {
-    /* 
     it("allows swapping our default ERC20s", async () => {
       await WMATIC.connect(whale).approve(swapper.address, amount);
       
@@ -58,7 +57,6 @@ describe("Swapper", function () {
       expect(finalSwapperWMATICBalance.toString()).to.be.equal("0");
       expect(finalSwapperWBTCBalance.toString()).to.be.equal("0");
     });
- */
 
     it("allows us to delete routers", async () => {
       await WMATIC.connect(whale).approve(swapper.address, amount);
@@ -92,29 +90,5 @@ describe("Swapper", function () {
       expect(initialSecondAddressInPath).to.be.equal(Web3.utils.toChecksumAddress(WBTC.address));
       expect(finalSecondAddressInPath).to.be.equal(Web3.utils.toChecksumAddress(WETH.address));
     });
-
-    /* it("finds optimal direct router", async () => {
-      await WMATIC.connect(whale).approve(swapper.address, amount);
-
-      const res = await swapper.connect(whale).findOptimalRouter(amount, [WMATIC.address, WETH.address, WBTC.address]);
-      
-      console.log(res[1].toString());
-    });
-
-    it("correctly registers routers", async () => {
-      await WMATIC.connect(whale).approve(swapper.address, amount);
-
-      const res0 = await swapper.connect(whale).router0(amount, [WMATIC.address, WBTC.address]);
-      const res1 = await swapper.connect(whale).router1(amount, [WMATIC.address, WBTC.address]);
-
-      console.log(res0[0], res1[0], res0[1].toString(), res1[1].toString());
-    }); */
-
-    /* it("finds optimal indirect router", async () => {
-      await WMATIC.connect(whale).approve(swapper.address, amount);
-
-      const res = await swapper.connect(whale).findOptimalRouter(amount, [WMATIC.address, WBTC.address]);
-      console.log(res); 
-    }); */
   });
 });
