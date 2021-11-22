@@ -24,17 +24,6 @@ contract Swapper {
         _;
     }
 
-    modifier routerExists(address router) {
-        bool exists = false;
-        for (uint256 i = 0; i < routers.length; i++) {
-            if (routers[i] == IUniswapV2Router02(router)) {
-                exists = true;
-                _;
-            }
-        }
-        require(exists == true, "Swapper: Requested router does not exist");
-    }
-
     function getRoutersQuantity() external view returns(uint256) {
         return routers.length;
     }
@@ -59,7 +48,7 @@ contract Swapper {
         routerPaths[routerAddress] = newPath;
     }
 
-    function findOptimalRouter(uint256 amountIn) public view returns(IUniswapV2Router02, uint256, address[] memory) {
+    function findOptimalRouter(uint256 amountIn) internal view returns(IUniswapV2Router02, uint256, address[] memory) {
         IUniswapV2Router02 bestRouter;
         uint256 bestAmountOut;
         for (uint256 i = 0; i < routers.length; i++) {
@@ -98,33 +87,5 @@ contract Swapper {
         );
 
         return amountOut;
-    }
-
-    function swapViaRouter(
-        address _routerAddress,
-        uint256 _amountIn,
-        uint256 _amountOutMin
-    ) 
-        external 
-        onlyParent 
-        routerExists(_routerAddress) 
-        returns(uint256 amountOut) 
-    {
-        address[] memory path = routerPaths[address(_routerAddress)]; 
-        IUniswapV2Router02 router = IUniswapV2Router02(_routerAddress);
-        uint256[] memory amountsOut = router.getAmountsOut(_amountIn, path); 
-        amountOut = amountsOut[amountsOut.length - 1];
-
-        require(amountOut >= _amountOutMin);
-
-        IERC20(path[0]).transferFrom(msg.sender, address(this), _amountIn);
-        IERC20(path[0]).approve(_routerAddress, _amountIn);
-        router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            _amountIn, 
-            _amountOutMin, 
-            path, 
-            parent,
-            block.timestamp
-        );
     }
 }
