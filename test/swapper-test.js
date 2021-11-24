@@ -26,8 +26,6 @@ describe("Swapper", function () {
     
     Swapper = await ethers.getContractFactory("Swapper");
     swapper = await Swapper.connect(whale).deploy(
-      "0xc35DADB65012eC5796536bD9864eD8773aBc74C4", // SushiSwap factory on polygon
-      "0x66F03B0d30838A3fee971928627ea6F59B236065", // SimpleSLPTWAP0OracleV1 on polygon
       [
         `SUSHI:WMATIC/WBTC:${uid(5)}`, 
         `QUICK:WMATIC/WBTC:${uid(5)}`,
