@@ -10,6 +10,7 @@ describe("Swapper", function () {
   const sushiRouter = "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506";
   const quickRouter = "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff";
   const amount = Web3.utils.toWei("100000", "ether");
+  const amountOut = "100000000"; // 1 wbtc
 
   beforeEach(async () => {
     whale = await ethers.getSigner(whaleAddress);
@@ -28,29 +29,41 @@ describe("Swapper", function () {
     swapper = await Swapper.connect(whale).deploy(
       [
         `SUSHI:WMATIC/WBTC:${uid(5)}`, 
+        `SUSHI:WMATIC/WBTC:${uid(5)}`,
         `QUICK:WMATIC/WBTC:${uid(5)}`,
         `QUICK:WMATIC/WBTC:${uid(5)}`
       ], // [5-letter router name]:[from]/[to]/[5-character uid]
       [
-        [WMATIC.address, WBTC.address], // make SushiSwap swap WMATIC for WBTC directly
-        [WMATIC.address, WETH.address, WBTC.address], // make QuickSwap swap WMATIC for WBTC via WETH (optimally-full LPs)
-        [WMATIC.address, WBTC.address]
+        [WMATIC.address, WBTC.address],
+        [WMATIC.address, WETH.address, WBTC.address], 
+        [WMATIC.address, WBTC.address],
+        [WMATIC.address, WETH.address, WBTC.address]
       ],
-      [sushiRouter, quickRouter, quickRouter] // initial IUniswapV2Router02s      
+      [sushiRouter, sushiRouter, quickRouter, quickRouter]      
     );  
   });
   
   describe("Swapper.sol", async () => {
+    it("gets optimal path from WMATIC to WBTC", async () => {
+      const path = await swapper.getOptimalPathTo(WMATIC.address, WBTC.address, amount);
 
-    it("can fetch a price through the oracle", async () => {
-      const result = await swapper.fetchOraclePrice(
-        WMATIC.address, WBTC.address
-      );
+      console.log(path, path.bestAmountOut.toString());
+      expect(path.bestID.toString().slice(5, -5)).to.be.equal(":WMATIC/WBTC:");
+    });
 
-      const receipt = await result.wait();
+    it("gets empty string for non-existent optimal path from WMATIC to USDC", async () => {
+      const path = await swapper.getOptimalPathTo(WMATIC.address, USDC.address, amount);
 
-      console.log(receipt.logs);
-    })
+      console.log(path.bestAmountOut.toString());
+      expect(path.bestID.toString()).to.be.equal("");
+      expect(path.bestAmountOut.toString()).to.be.equal("0");
+    });
+
+    it("gets optimal input for WMATIC to WBTC", async () => {
+      const path = await swapper.getOptimalPathFrom(WMATIC.address, WBTC.address, amountOut);
+
+      console.log(path);
+    });
     
     /* 
     it("allows swapping WMATIC for WBTC via the best path", async () => {

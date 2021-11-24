@@ -216,9 +216,11 @@ contract Swapper is ISwapper {
     }
 
     // fetches and sorts the reserves for a pair
-    function getReserves(address factory, address tokenA, address tokenB) internal view returns (uint reserveA, uint reserveB) {
+    function getReserves(address factoryAddress, address tokenA, address tokenB) internal view returns (uint reserveA, uint reserveB) {
         (address token0,) = sortTokens(tokenA, tokenB);
-        (uint reserve0, uint reserve1,) = IUniswapV2Pair(pairFor(factory, tokenA, tokenB)).getReserves();
+        IUniswapV2Factory factory = IUniswapV2Factory(factoryAddress);
+        IUniswapV2Pair pair = IUniswapV2Pair(factory.getPair(tokenA, tokenB));
+        (uint reserve0, uint reserve1,) = pair.getReserves();
         (reserveA, reserveB) = tokenA == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
     }
 
@@ -227,15 +229,5 @@ contract Swapper is ISwapper {
         require(tokenA != tokenB, 'UniswapV2Library: IDENTICAL_ADDRESSES');
         (token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         require(token0 != address(0), 'UniswapV2Library: ZERO_ADDRESS');
-    }
-
-    function pairFor(address factory, address tokenA, address tokenB) internal pure returns (address pair) {
-        (address token0, address token1) = sortTokens(tokenA, tokenB);
-        pair = address(uint160(uint(keccak256(abi.encodePacked(
-            hex'ff',
-            factory,
-            keccak256(abi.encodePacked(token0, token1)),
-            hex'96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f'
-        )))));
     }
 }
