@@ -32,7 +32,7 @@ contract Swapper {
         address[] memory routers
     ) {
         require(routers.length == paths.length, "Swapper: Every path must have a router");
-        require(routers.length == paths.length, "Swapper: Every path must have an ID");
+        require(ids.length == paths.length, "Swapper: Every path must have an ID");
         owner = msg.sender;
         sushiFactory = IUniswapV2Factory(factoryAddress);
         sushiOracle = IOracle(oracleAddress);
