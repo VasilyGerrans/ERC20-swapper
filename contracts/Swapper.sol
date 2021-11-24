@@ -71,10 +71,6 @@ contract Swapper {
 
     function updatePath(string memory id, address[] memory newPath) external onlyOwner {
         SwapPath storage oldSwapPath = SwapPathVariants[id];
-        SwapPathVariants[id] = SwapPath(
-            id, oldSwapPath.router, newPath, oldSwapPath.active
-        );
-
         address oldFrom = oldSwapPath.path[0];
         address oldTo = oldSwapPath.path[oldSwapPath.path.length - 1];
         address newFrom = newPath[0];
@@ -82,6 +78,10 @@ contract Swapper {
         if (oldFrom != newFrom || oldTo != newTo) {
             deletePath(oldFrom, oldTo, id);
             addPath(id, newPath, oldSwapPath.router);
+        } else {
+            SwapPathVariants[id] = SwapPath(
+                id, oldSwapPath.router, newPath, oldSwapPath.active
+            );
         }
     }
 
