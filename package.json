@@ -17,10 +17,12 @@
     "hardhat": "^2.6.8"
   },
   "dependencies": {
+    "@chainlink/contracts": "^0.2.2",
     "@openzeppelin/contracts": "^4.3.3",
     "@uniswap/v2-periphery": "^1.1.0-beta.0",
     "ansi-regex": "^5.0.1",
     "dotenv": "^10.0.0",
+    "uid": "^2.0.0",
     "web3": "^1.6.1"
   }
 }

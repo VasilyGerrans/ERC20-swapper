@@ -2,87 +2,136 @@
 pragma solidity ^0.8.0;
 
 import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
+import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
+import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./IOracle.sol";
 
 contract Swapper {
-    address private parent;
+    address private owner;
 
-    IUniswapV2Router02[] public routers;
-    mapping(address => address[]) public routerPaths;
+    // We assume that we will use SimpleSLPTWAP0OracleV1 and SimpleSLPTWAP1OracleV1
+    IUniswapV2Factory private sushiFactory;
+    IOracle private sushiOracle; 
 
-    constructor(address _parentAddress, address[] memory _routerAddresses, address[][] memory _defaultPaths) {
-        require(_routerAddresses.length == _defaultPaths.length, "Swapper: Every router must have a path");
-        parent = _parentAddress;
-        for (uint256 i = 0; i < _routerAddresses.length; i++) {
-            routers.push(IUniswapV2Router02(_routerAddresses[i]));
-            routerPaths[_routerAddresses[i]] = _defaultPaths[i];
+    struct SwapPath {
+        string ID;
+        address router;
+        address[] path;
+        bool active;
+    }
+
+    mapping(address => mapping(address => string[])) public SwapPathIDs;
+    mapping(string => SwapPath) public SwapPathVariants;
+    
+    constructor(
+        address factoryAddress,  
+        address oracleAddress, 
+        string[] memory ids, 
+        address[][] memory paths, 
+        address[] memory routers
+    ) {
+        require(routers.length == paths.length, "Swapper: Every path must have a router");
+        require(routers.length == paths.length, "Swapper: Every path must have an ID");
+        owner = msg.sender;
+        sushiFactory = IUniswapV2Factory(factoryAddress);
+        sushiOracle = IOracle(oracleAddress);
+        for (uint256 i = 0; i < paths.length; i++) {
+            addPath(ids[i], paths[i], routers[i]);
         }
     }
 
-    modifier onlyParent {
-        require(msg.sender == parent, "Swapper: Only parent can call this function");
+    modifier onlyOwner {
+        require(msg.sender == owner, "Swapper: Only owner can call this function");
         _;
     }
 
-    function getRoutersQuantity() external view returns(uint256) {
-        return routers.length;
+    function addPath(string memory id, address[] memory path, address routerAddress) public onlyOwner {
+        SwapPathVariants[id] = SwapPath(
+            id, 
+            routerAddress, 
+            path, 
+            true
+        );
+        SwapPathIDs[path[0]][path[path.length - 1]].push(id);
     }
 
-    function addRouter(address routerAddress, address[] memory defaultPath) public onlyParent {
-        routers.push(IUniswapV2Router02(routerAddress));
-        routerPaths[routerAddress] = defaultPath;
-    }
-
-    function deleteRouter(address routerAddress) external onlyParent {
-        for (uint256 i = 0; i < routers.length; i++) {
-            if (routers[i] == IUniswapV2Router02(routerAddress)) {
-                for (uint256 j = i; j < routers.length - 1; j++) {
-                    routers[i] = routers[j + 1];
+    function deletePath(address from, address to, string memory id) public onlyOwner {
+        for (uint256 i = 0; i < SwapPathIDs[from][to].length; i++) {
+            if (keccak256(abi.encode(SwapPathIDs[from][to][i])) == keccak256(abi.encode(id))) {
+                for (uint256 j = i; j < SwapPathIDs[from][to].length - 1; j++) {
+                    SwapPathIDs[from][to][j] = SwapPathIDs[from][to][j + 1];
                 }
-                routers.pop();
+                SwapPathIDs[from][to].pop();
+                SwapPathVariants[id].active = false;
+                break;
             }
         }
     }
 
-    function updatePath(address routerAddress, address[] memory newPath) external onlyParent {
-        routerPaths[routerAddress] = newPath;
+    function updatePath(string memory id, address[] memory newPath) external onlyOwner {
+        SwapPath storage oldSwapPath = SwapPathVariants[id];
+        SwapPathVariants[id] = SwapPath(
+            id, oldSwapPath.router, newPath, oldSwapPath.active
+        );
+
+        address oldFrom = oldSwapPath.path[0];
+        address oldTo = oldSwapPath.path[oldSwapPath.path.length - 1];
+        address newFrom = newPath[0];
+        address newTo = newPath[newPath.length - 1];
+        if (oldFrom != newFrom || oldTo != newTo) {
+            deletePath(oldFrom, oldTo, id);
+            addPath(id, newPath, oldSwapPath.router);
+        }
     }
 
-    function findOptimalRouter(uint256 amountIn) internal view returns(IUniswapV2Router02, uint256, address[] memory) {
-        IUniswapV2Router02 bestRouter;
-        uint256 bestAmountOut;
-        for (uint256 i = 0; i < routers.length; i++) {
-            if (i == 0) {
-                bestRouter = routers[i];
-                uint256[] memory amounts = bestRouter.getAmountsOut(amountIn, routerPaths[address(routers[i])]);
-                bestAmountOut = amounts[amounts.length - 1];
-            } else {
-                uint256[] memory amountOut = routers[i].getAmountsOut(amountIn, routerPaths[address(routers[i])]);
-                uint256 possibleAmount = amountOut[amountOut.length - 1];
-                if (possibleAmount > bestAmountOut) {
-                    bestRouter = routers[i];
-                    bestAmountOut = possibleAmount;
-                }
+    function findOptimalPath(address from, address to, uint256 amountIn) internal view returns(string memory bestPath, uint256 bestAmount) {
+        for (uint256 i = 0; i < SwapPathIDs[from][to].length; i++) {
+            IUniswapV2Router02 router = IUniswapV2Router02(SwapPathVariants[SwapPathIDs[from][to][i]].router);
+
+            uint256[] memory amountsOut = router.getAmountsOut(amountIn, SwapPathVariants[SwapPathIDs[from][to][i]].path);
+            uint256 possibleAmount = amountsOut[amountsOut.length - 1];
+
+            if (possibleAmount > bestAmount) {
+                bestAmount = possibleAmount;
+                bestPath = SwapPathIDs[from][to][i];
             }
         }
-        return (bestRouter, bestAmountOut, routerPaths[address(bestRouter)]);
+    }
+
+
+    function fetchOraclePrice(address from, address to) public view returns (uint256) {
+        IUniswapV2Pair uniPair = IUniswapV2Pair(sushiFactory.getPair(from, to));
+
+        // get price of to in terms of from
+        uint256 price = from == uniPair.token0() ? uniPair.price0CumulativeLast() : uniPair.price1CumulativeLast();
+
+        // (bool success, uint256 price) = IOracle(sushiOracle).peek(data);
+        return price;
     }
 
     function swap(
-        uint256 _amountIn,
-        uint256 _amountOutMin
-    ) external onlyParent returns(uint256) {
-        (IUniswapV2Router02 router, uint256 amountOut, address[] memory path) = findOptimalRouter(_amountIn);
+        address from,
+        address to,
+        uint256 amountIn,
+        uint256 maxSlippage
+    ) external returns(uint256) {
+        (uint256 oraclePrice) = fetchOraclePrice(from, to);
+        (string memory id, uint256 amountOut) = findOptimalPath(from, to, amountIn);
 
-        require(amountOut >= _amountOutMin, "Swapper: Insufficient amountOut");
+        uint256 amountOutMin = amountIn * oraclePrice * (10000 - maxSlippage) / 10000;
+        require(amountOut >= amountOutMin, "Swapper: slippage exceeded");
+
+        IERC20 fromToken = IERC20(from);
+        IUniswapV2Router02 chosenRouter = IUniswapV2Router02(SwapPathVariants[id].router); 
         
-        IERC20(path[0]).transferFrom(msg.sender, address(this), _amountIn);
-        IERC20(path[0]).approve(address(router), _amountIn);
-        router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            _amountIn, 
-            _amountOutMin, 
-            path, 
-            parent,
+        fromToken.transferFrom(msg.sender, address(this), amountIn);
+        fromToken.approve(address(chosenRouter), amountIn);
+        chosenRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            amountIn, 
+            amountOutMin, 
+            SwapPathVariants[id].path, 
+            msg.sender,
             block.timestamp
         );
 
