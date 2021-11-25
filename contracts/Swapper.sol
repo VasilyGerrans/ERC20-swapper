@@ -103,8 +103,8 @@ contract Swapper is ISwapper {
         for (uint256 i = 0; i < SwapPathIDs[from][to].length; i++) {
             IUniswapV2Router02 router = IUniswapV2Router02(SwapPathVariants[SwapPathIDs[from][to][i]].router);
 
-            (uint256 reserveIn, uint256 reserveOut) = getReserves(router.factory(), from, to);
-            uint possibleAmount = router.getAmountIn(amountOut, reserveIn, reserveOut);  
+            uint[] memory amountsIn = router.getAmountsIn(amountOut, SwapPathVariants[SwapPathIDs[from][to][i]].path);
+            uint possibleAmount = amountsIn[0];
 
             if (possibleAmount < bestAmountIn) {
                 bestAmountIn = possibleAmount;

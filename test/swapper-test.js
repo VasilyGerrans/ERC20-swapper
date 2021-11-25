@@ -9,8 +9,8 @@ describe("Swapper", function () {
   const whaleAddress = "0x01aeFAC4A308FbAeD977648361fBAecFBCd380C7"; // big boy on Polygon
   const sushiRouter = "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506";
   const quickRouter = "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff";
-  const amount = Web3.utils.toWei("100000", "ether");
-  const amountOut = "100000000"; // 1 wbtc
+  const amount = Web3.utils.toWei("1000", "ether");
+  const amountOut = "1000"; // 0.00001 wbtc
 
   beforeEach(async () => {
     whale = await ethers.getSigner(whaleAddress);
@@ -40,32 +40,66 @@ describe("Swapper", function () {
         [WMATIC.address, WETH.address, WBTC.address]
       ],
       [sushiRouter, sushiRouter, quickRouter, quickRouter]      
-    );  
+    );
   });
   
   describe("Swapper.sol", async () => {
     it("gets optimal path from WMATIC to WBTC", async () => {
       const path = await swapper.getOptimalPathTo(WMATIC.address, WBTC.address, amount);
 
-      console.log(path, path.bestAmountOut.toString());
+      console.log("For input amount 1,000 WMATIC we have chosen path", path.bestID, "with best amount out", path.bestAmountOut.toString(), "WBTC (8 decimals)");
+
+      const SwapPath = await swapper.SwapPathVariants(path.bestID);
+
+      console.log("More about this path:", SwapPath);
+
       expect(path.bestID.toString().slice(5, -5)).to.be.equal(":WMATIC/WBTC:");
     });
 
     it("gets empty string for non-existent optimal path from WMATIC to USDC", async () => {
       const path = await swapper.getOptimalPathTo(WMATIC.address, USDC.address, amount);
 
-      console.log(path.bestAmountOut.toString());
       expect(path.bestID.toString()).to.be.equal("");
       expect(path.bestAmountOut.toString()).to.be.equal("0");
     });
 
-    it("gets optimal input for WMATIC to WBTC", async () => {
-      const path = await swapper.getOptimalPathFrom(WMATIC.address, WBTC.address, amountOut);
+    it("creates, updates, and deletes paths", async () => {
+      const newId = `SUSHI:WMATIC/WBTC:${uid(5)}`;
+      await swapper.connect(whale).addPath(
+        newId, 
+        [WMATIC.address, USDC.address, WBTC.address],
+        sushiRouter
+      );
 
-      console.log(path);
+      const createdId = await swapper.SwapPathIDs(WMATIC.address, WBTC.address, 4);
+      expect(createdId).to.be.equal(newId);
+
+      const createdSwapPath = await swapper.SwapPathVariants(createdId);
+      expect(createdSwapPath.active).to.be.equal(true);
+
+      await swapper.connect(whale).deletePath(
+        WMATIC.address, WBTC.address, newId
+      );
+
+      const deletedSwapPath = await swapper.SwapPathVariants(createdId);
+      expect(deletedSwapPath.active).to.be.equal(false);
     });
-    
-    /* 
+
+/*     
+    it("gets reserves", async () => {
+      const reserves = await swapper.getReservesTest();
+
+      console.log(reserves.reserveA.toString(), reserves.reserveB.toString());
+    });
+*/
+
+    /* it("gets optimal input for WMATIC to WBTC", async () => {
+      const path = await swapper.getOptimalPathFrom(WMATIC.address, WBTC.address, amountOut);
+      
+      console.log(path);
+    }); */
+
+/*
     it("allows swapping WMATIC for WBTC via the best path", async () => {
       await WMATIC.connect(whale).approve(swapper.address, amount);
       
