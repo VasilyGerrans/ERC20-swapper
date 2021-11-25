@@ -51,7 +51,7 @@ describe("Swapper", function () {
 
       const SwapPath = await swapper.SwapPathVariants(path.bestID);
 
-      console.log("More about this path:", SwapPath);
+      console.log("More about this path:\n", SwapPath);
 
       expect(path.bestID.toString().slice(5, -5)).to.be.equal(":WMATIC/WBTC:");
     });
@@ -85,57 +85,60 @@ describe("Swapper", function () {
       expect(deletedSwapPath.active).to.be.equal(false);
     });
 
-/*     
-    it("gets reserves", async () => {
-      const reserves = await swapper.getReservesTest();
+    it("swaps directly", async () => {
+      await WMATIC.connect(whale).approve(swapper.address, amount); 
 
-      console.log(reserves.reserveA.toString(), reserves.reserveB.toString());
-    });
-*/
-
-    /* it("gets optimal input for WMATIC to WBTC", async () => {
-      const path = await swapper.getOptimalPathFrom(WMATIC.address, WBTC.address, amountOut);
-      
-      console.log(path);
-    }); */
-
-/*
-    it("allows swapping WMATIC for WBTC via the best path", async () => {
-      await WMATIC.connect(whale).approve(swapper.address, amount);
-      
       const initialWMATICBalance = await WMATIC.balanceOf(whaleAddress);
       const initialWBTCBalance = await WBTC.balanceOf(whaleAddress);
-      
-      await swapper.connect(whale).swap(
-        WMATIC.address,
-        WBTC.address,
-        amount, 
-        8
+
+      await swapper.connect(whale).swapFromDirect(
+        sushiRouter, [WMATIC.address, WBTC.address], amountOut
       );
- 
+
       const finalWMATICBalance = await WMATIC.balanceOf(whaleAddress);
       const finalWBTCBalance = await WBTC.balanceOf(whaleAddress);
 
-      expect(initialWMATICBalance.gt(finalWMATICBalance));
-      expect(initialWBTCBalance.lt(finalWBTCBalance));
-      expect(initialWMATICBalance.sub(finalWMATICBalance).toString()).to.be.equal(amount);
+      expect(finalWBTCBalance.sub(initialWBTCBalance)).to.be.equal(amountOut);
+
+      console.log(
+        "Prior to the direct swap, the account had", 
+        initialWMATICBalance.toString(), 
+        "WMATIC and",
+        initialWBTCBalance.toString(), 
+        "WBTC. After the direct swap, the account had",
+        finalWMATICBalance.toString(), 
+        "WMATIC and",
+        finalWBTCBalance.toString(),
+        "WBTC."
+      );
     });
 
+    it("gets optimal input for WMATIC to WBTC", async () => {
+      const path = await swapper.getOptimalPathFrom(WMATIC.address, WBTC.address, amountOut);
+      
+      console.log(
+        "The optimal input to get", 
+        amountOut, 
+        "WBTC (8 decimals) is calculated to be", 
+        path.bestAmountIn.toString(),
+        "WMATIC (18 decimals)"
+      );
+      console.log("More information about the chosen path:\n", path);
+    });
+    
     it("leaves no remaining funds in the swapper contract", async () => {
       await WMATIC.connect(whale).approve(swapper.address, amount);
-      await swapper.connect(whale).swap(
+      await swapper.connect(whale).swapTo(
         WMATIC.address,
         WBTC.address,
-        amount, 
-        3
+        amount
       );
-
+    
       const finalSwapperWMATICBalance = await WMATIC.balanceOf(swapper.address);
       const finalSwapperWBTCBalance = await WBTC.balanceOf(swapper.address);
-
+    
       expect(finalSwapperWMATICBalance.toString()).to.be.equal("0");
       expect(finalSwapperWBTCBalance.toString()).to.be.equal("0");
     });
-     */
   });
 });
