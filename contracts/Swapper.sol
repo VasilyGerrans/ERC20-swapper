@@ -114,7 +114,6 @@ contract Swapper is ISwapper {
         } 
     }
 
-    // formerly "SwapByIndex"
     function swapByIndex(
         address routerAddress, 
         address[] memory path, 
