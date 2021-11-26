@@ -115,11 +115,11 @@ contract Swapper is ISwapper {
     }
 
     // formerly "SwapByIndex"
-    function swapToDirect(
+    function swapByIndex(
         address routerAddress, 
         address[] memory path, 
         uint256 amountIn
-    ) external override returns (uint256 amountOut) {
+    ) public override returns (uint256 amountOut) {
         require(path.length >= 2, "Swapper: path must have at least 2 tokens");
         IERC20 fromToken = IERC20(path[0]);
         fromToken.transferFrom(msg.sender, address(this), amountIn);
@@ -140,54 +140,14 @@ contract Swapper is ISwapper {
         );
     }
 
-    function swapFromDirect(
-        address routerAddress, 
-        address[] memory path, 
-        uint256 amountOut
-    ) external override returns (uint256 amountIn) {
-        require(path.length >= 2, "Swapper: path must have at least 2 tokens");
-
-        IUniswapV2Router02 router = IUniswapV2Router02(routerAddress);
-        (uint256 reserveIn, uint256 reserveOut) = getReserves(router.factory(), path[0], path[path.length - 1]);
-        amountIn = router.getAmountIn(amountOut, reserveIn, reserveOut);  
-
-        IERC20 fromToken = IERC20(path[0]);
-        fromToken.transferFrom(msg.sender, address(this), amountIn);
-        
-        if (fromToken.allowance(address(this), address(router)) < amountIn) {
-            fromToken.approve(address(router), type(uint256).max);
-        } 
-        router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amountIn, 
-            amountOut, 
-            path,
-            msg.sender,
-            block.timestamp
-        ); 
-    }
-
     function swapTo(
         address from, 
         address to, 
         uint256 amountIn
     ) external override returns (uint256) {
-        IERC20 fromToken = IERC20(from);
-        fromToken.transferFrom(msg.sender, address(this), amountIn);
-        
         (string memory id, uint256 amountOut) = getOptimalPathTo(from, to, amountIn);
-        
-        IUniswapV2Router02 chosenRouter = IUniswapV2Router02(SwapPathVariants[id].router); 
-        if (fromToken.allowance(address(this), address(chosenRouter)) < amountIn) {
-            fromToken.approve(address(chosenRouter), type(uint256).max);
-        } 
-        chosenRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amountIn, 
-            amountOut, 
-            SwapPathVariants[id].path, 
-            msg.sender,
-            block.timestamp
-        ); 
-
+        uint256 actualAmountOut = swapByIndex(SwapPathVariants[id].router, SwapPathVariants[id].path, amountIn);
+        require(actualAmountOut == amountOut, "Swapper: Different amounts out");
         return amountOut;
     }
     
@@ -197,21 +157,8 @@ contract Swapper is ISwapper {
         uint256 amountOut
     ) external override returns (uint256) {
         (string memory id, uint256 amountIn) = getOptimalPathFrom(from, to, amountOut);
-
-        IERC20 fromToken = IERC20(from);
-        fromToken.transferFrom(msg.sender, address(this), amountIn);
-        
-        IUniswapV2Router02 chosenRouter = IUniswapV2Router02(SwapPathVariants[id].router); 
-        if (fromToken.allowance(address(this), address(chosenRouter)) < amountIn) {
-            fromToken.approve(address(chosenRouter), type(uint256).max);
-        } 
-        chosenRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amountIn, 
-            amountOut, 
-            SwapPathVariants[id].path, 
-            msg.sender,
-            block.timestamp
-        ); 
+        uint256 actualAmountOut = swapByIndex(SwapPathVariants[id].router, SwapPathVariants[id].path, amountIn);
+        require(amountOut == actualAmountOut, "Swapper: Different amounts out");
         return amountIn; 
     }
 
