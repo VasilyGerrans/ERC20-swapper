@@ -1,179 +1,286 @@
-//SPDX-License-Identifier: Unlicense
+//SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
-import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol";
-import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./ISwapper.sol";
+import "./TokenLibrary.sol";
 
-contract Swapper is ISwapper {
-    address private owner;
+contract Swapper is ISwapper, Ownable {
+    /**
+        @notice The Polygon network is often undercollateralised. For cheaper swaps,
+        we route our swaps through pools that have more liquidity. At the moment,
+        we do this with an array of middle tokens through which a swap can be routed.
+        @dev This array shouldn't store more than 256 tokens because all for-loops use uint8 indexes.
+     */
+    string[] public middleTokens;
 
-    struct SwapPath {
-        string ID;
-        address router;
-        address[] path;
-        bool active;
+    /**
+        @notice Routers through which we will view prices and swap ERC20 tokens.
+     */
+    IUniswapV2Router02 public quickSwap;
+    IUniswapV2Router02 public sushiSwap;
+
+    /** 
+        @notice Library contract of mappings from strings to addresses of ERC20 tokens on Polygon.
+     */ 
+    ITokenLibrary public tokenLibrary;
+
+    constructor() {
+        tokenLibrary = new TokenLibrary();
+
+        // Inlcude two most common middle tokens for QuickSwap
+        middleTokens.push("WETH");
+        middleTokens.push("USDC");
+
+        quickSwap = IUniswapV2Router02(0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff); 
+        sushiSwap = IUniswapV2Router02(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506);
     }
 
-    mapping(address => mapping(address => string[])) public SwapPathIDs;
-    mapping(string => SwapPath) public SwapPathVariants;
-    
-    constructor(
-        string[] memory ids, 
-        address[][] memory paths, 
-        address[] memory routers
-    ) {
-        require(routers.length == paths.length, "Swapper: Every path must have a router");
-        require(ids.length == paths.length, "Swapper: Every path must have an ID");
-        owner = msg.sender;
-        for (uint256 i = 0; i < paths.length; i++) {
-            addPath(ids[i], paths[i], routers[i]);
+    function addMiddleToken(string memory _name, address _address) public onlyOwner {
+        require(middleTokens.length < 255, "Swapper: Max middleTokens size exceeded");
+        for (uint8 i = 0; i < middleTokens.length; i++) {
+            require(sameStrings(middleTokens[i], _name) == false, "Swapper: Token already included");
         }
+        if (tokenLibrary.getToken(_name) == address(0)) {
+            tokenLibrary.addToken(_name, _address);
+        }
+        middleTokens.push(_name);
     }
 
-    modifier onlyOwner {
-        require(msg.sender == owner, "Swapper: Only owner can call this function");
-        _;
-    }
-
-    function addPath(string memory id, address[] memory path, address routerAddress) public override onlyOwner {
-        SwapPathVariants[id] = SwapPath(
-            id, 
-            routerAddress, 
-            path, 
-            true
-        );
-        SwapPathIDs[path[0]][path[path.length - 1]].push(id);
-    }
-
-    function deletePath(address from, address to, string memory id) public override onlyOwner {
-        for (uint256 i = 0; i < SwapPathIDs[from][to].length; i++) {
-            if (keccak256(abi.encode(SwapPathIDs[from][to][i])) == keccak256(abi.encode(id))) {
-                for (uint256 j = i; j < SwapPathIDs[from][to].length - 1; j++) {
-                    SwapPathIDs[from][to][j] = SwapPathIDs[from][to][j + 1];
+    function removeMiddleToken(string memory name) public onlyOwner {
+        for (uint8 i = 0; i < middleTokens.length; i++) {
+            if (sameStrings(middleTokens[i], name)) {
+                for (uint8 j = i; j < middleTokens.length - 1; j++) {
+                    middleTokens[j] = middleTokens[j + 1];
                 }
-                SwapPathIDs[from][to].pop();
-                SwapPathVariants[id].active = false;
+                middleTokens.pop();
                 break;
             }
         }
     }
 
-    function updatePath(string memory id, address[] memory newPath) external override onlyOwner {
-        SwapPath storage oldSwapPath = SwapPathVariants[id];
-        address oldFrom = oldSwapPath.path[0];
-        address oldTo = oldSwapPath.path[oldSwapPath.path.length - 1];
-        address newFrom = newPath[0];
-        address newTo = newPath[newPath.length - 1];
-        if (oldFrom != newFrom || oldTo != newTo) {
-            deletePath(oldFrom, oldTo, id);
-            addPath(id, newPath, oldSwapPath.router);
-        } else {
-            SwapPathVariants[id] = SwapPath(
-                id, oldSwapPath.router, newPath, oldSwapPath.active
+    function priceTo(
+        string memory from,
+        string memory to,
+        uint256 amountIn
+    ) public view override returns (
+        address middleToken, 
+        IUniswapV2Router02 router, 
+        uint256 bestAmountOut
+    ) {
+        address fromToken = tokenLibrary.getToken(from);
+        address toToken = tokenLibrary.getToken(to);
+
+        // Setting SushiSwap direct default
+        address[] memory path = new address[](2);
+        path[0] = fromToken;
+        path[1] = toToken;
+        
+        uint256[] memory amountsOut = sushiSwap.getAmountsOut(amountIn, path);
+        bestAmountOut = amountsOut[amountsOut.length - 1];
+        router = sushiSwap;
+
+        // Checking QuickSwap direct
+        amountsOut = quickSwap.getAmountsOut(amountIn, path);
+        uint256 newAmountOut = amountsOut[amountsOut.length - 1]; 
+        if (newAmountOut > bestAmountOut) {
+            bestAmountOut = newAmountOut;
+            router = quickSwap;
+        }
+        
+        // Checking indirect
+        for (uint8 i = 0; i < middleTokens.length; i++) {
+            if (sameStrings(middleTokens[i], from) == false && sameStrings(middleTokens[i], to) == false) {
+                path = new address[](3);
+                path[0] = fromToken;
+                path[1] = tokenLibrary.getToken(middleTokens[i]);
+                path[2] = toToken;
+
+                amountsOut = sushiSwap.getAmountsOut(amountIn, path);
+                newAmountOut = amountsOut[amountsOut.length - 1]; 
+                if (newAmountOut > bestAmountOut) {
+                    bestAmountOut = newAmountOut;
+                    middleToken = tokenLibrary.getToken(middleTokens[i]);
+                    router = sushiSwap;
+                }
+
+                amountsOut = quickSwap.getAmountsOut(amountIn, path);
+                newAmountOut = amountsOut[amountsOut.length - 1]; 
+                if (newAmountOut > bestAmountOut) {
+                    bestAmountOut = newAmountOut;
+                    middleToken = tokenLibrary.getToken(middleTokens[i]);
+                    router = quickSwap;
+                }
+            }
+        }
+    }
+
+    function priceFrom(
+        string memory from,
+        string memory to,
+        uint256 amountOut
+    ) public view override returns (
+        address middleToken,
+        IUniswapV2Router02 router,
+        uint256 bestAmountIn
+    ) {
+        address fromToken = tokenLibrary.getToken(from);
+        address toToken = tokenLibrary.getToken(to);
+
+        // Setting SushiSwap direct default
+        address[] memory path = new address[](2);
+        path[0] = fromToken;
+        path[1] = toToken;
+        
+        uint256[] memory amountsIn = sushiSwap.getAmountsIn(amountOut, path);
+        bestAmountIn = amountsIn[0];
+        router = sushiSwap;
+
+        // Checking QuickSwap direct
+        amountsIn = quickSwap.getAmountsIn(amountOut, path);
+        uint256 newAmountOut = amountsIn[0]; 
+        if (newAmountOut < bestAmountIn) {
+            bestAmountIn = newAmountOut;
+            router = quickSwap;
+        }
+
+        // Checking indirect
+        for (uint8 i = 0; i < middleTokens.length; i++) {
+            if (sameStrings(middleTokens[i], from) == false && sameStrings(middleTokens[i], to) == false) {
+                path = new address[](3);
+                path[0] = fromToken;
+                path[1] = tokenLibrary.getToken(middleTokens[i]);
+                path[2] = toToken;
+
+                amountsIn = sushiSwap.getAmountsIn(amountOut, path);
+                newAmountOut = amountsIn[0]; 
+                if (newAmountOut < bestAmountIn) {
+                    bestAmountIn = newAmountOut;
+                    middleToken = tokenLibrary.getToken(middleTokens[i]);
+                    router = sushiSwap;
+                }
+
+                amountsIn = quickSwap.getAmountsIn(amountOut, path);
+                newAmountOut = amountsIn[0]; 
+                if (newAmountOut < bestAmountIn) {
+                    bestAmountIn = newAmountOut;
+                    middleToken = tokenLibrary.getToken(middleTokens[i]);
+                    router = quickSwap;
+                }
+            }
+        } 
+    }
+
+    /**
+        @param from must be approved before calling this function.
+     */
+    function swapTo(
+        string memory from,
+        string memory to,
+        uint256 amountIn
+    ) public override returns(uint256) {
+        address fromToken = tokenLibrary.getToken(from);
+        address toToken = tokenLibrary.getToken(to);
+
+        (address middleToken, IUniswapV2Router02 router, uint256 bestAmountOut) = priceTo(from, to, amountIn);
+        
+        IERC20 inputToken = IERC20(fromToken);
+        inputToken.transferFrom(msg.sender, address(this), amountIn);
+
+        if (inputToken.allowance(address(this), address(router)) < amountIn) {
+            inputToken.approve(address(router), type(uint256).max);
+        }
+       
+        // Direct swap
+        if (middleToken == address(0)) {
+            address[] memory path = new address[](2);
+            path[0] = fromToken;
+            path[1] = toToken;
+            router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                amountIn, 
+                bestAmountOut, 
+                path,
+                msg.sender,
+                block.timestamp
             );
         }
-    }
-
-    function getOptimalPathTo(
-        address from, 
-        address to, 
-        uint256 amountIn
-    ) public view override returns (string memory bestID, uint256 bestAmountOut) {
-        for (uint256 i = 0; i < SwapPathIDs[from][to].length; i++) {
-            IUniswapV2Router02 router = IUniswapV2Router02(SwapPathVariants[SwapPathIDs[from][to][i]].router);
-
-            (uint256 reserveIn, uint256 reserveOut) = getReserves(router.factory(), from, to);
-            uint256 possibleAmount = router.getAmountOut(amountIn, reserveIn, reserveOut);
-
-            if (possibleAmount > bestAmountOut) {
-                bestAmountOut = possibleAmount;
-                bestID = SwapPathIDs[from][to][i];
-            }
+        // Indirect swap
+        else {
+            address[] memory path = new address[](3);
+            path[0] = fromToken;
+            path[1] = middleToken;
+            path[2] = toToken;
+            router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                amountIn, 
+                bestAmountOut, 
+                path,
+                msg.sender,
+                block.timestamp
+            );
         }
+
+        return bestAmountOut;
     }
 
-    function getOptimalPathFrom(
-        address from,
-        address to,
-        uint256 amountOut
-    ) public view override returns (string memory bestID, uint256 bestAmountIn) {
-        bestAmountIn = type(uint256).max;
-        for (uint256 i = 0; i < SwapPathIDs[from][to].length; i++) {
-            IUniswapV2Router02 router = IUniswapV2Router02(SwapPathVariants[SwapPathIDs[from][to][i]].router);
-
-            (uint256 reserveIn, uint256 reserveOut) = getReserves(router.factory(), from, to);
-            uint possibleAmount = router.getAmountIn(amountOut, reserveIn, reserveOut);
-
-            if (possibleAmount < bestAmountIn) {
-                bestAmountIn = possibleAmount;
-                bestID = SwapPathIDs[from][to][i];
-            }
-        } 
-    }
-
-    function swapByIndex(
-        address routerAddress, 
-        address[] memory path, 
-        uint256 amountIn
-    ) public override returns (uint256 amountOut) {
-        require(path.length >= 2, "Swapper: path must have at least 2 tokens");
-        IERC20 fromToken = IERC20(path[0]);
-        fromToken.transferFrom(msg.sender, address(this), amountIn);
-        
-        IUniswapV2Router02 router = IUniswapV2Router02(routerAddress);
-        (uint256 reserveIn, uint256 reserveOut) = getReserves(router.factory(), path[0], path[path.length - 1]);
-        amountOut = router.getAmountOut(amountIn, reserveIn, reserveOut);
-
-        if (fromToken.allowance(address(this), address(router)) < amountIn) {
-            fromToken.approve(address(router), type(uint256).max);
-        } 
-        router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amountIn, 
-            amountOut, 
-            path,
-            msg.sender,
-            block.timestamp
-        );
-    }
-
-    function swapTo(
-        address from, 
-        address to, 
-        uint256 amountIn
-    ) external override returns (uint256) {
-        (string memory id, uint256 amountOut) = getOptimalPathTo(from, to, amountIn);
-        uint256 actualAmountOut = swapByIndex(SwapPathVariants[id].router, SwapPathVariants[id].path, amountIn);
-        require(actualAmountOut == amountOut, "Swapper: Different amounts out");
-        return amountOut;
-    }
-    
+    /**
+        @param from must be approved before calling this function.
+     */
     function swapFrom(
-        address from, 
-        address to, 
+        string memory from,
+        string memory to, 
         uint256 amountOut
     ) external override returns (uint256) {
-        (string memory id, uint256 amountIn) = getOptimalPathFrom(from, to, amountOut);
-        uint256 actualAmountOut = swapByIndex(SwapPathVariants[id].router, SwapPathVariants[id].path, amountIn);
-        require(amountOut == actualAmountOut, "Swapper: Different amounts out");
-        return amountIn; 
+        address fromToken = tokenLibrary.getToken(from);
+        address toToken = tokenLibrary.getToken(to);
+
+        (address middleToken, IUniswapV2Router02 router, uint256 bestAmountIn) = priceFrom(from, to, amountOut);
+
+        IERC20 inputToken = IERC20(fromToken);
+        inputToken.transferFrom(msg.sender, address(this), bestAmountIn); 
+
+        if (inputToken.allowance(address(this), address(router)) < bestAmountIn) {
+            inputToken.approve(address(router), type(uint256).max);
+        } 
+
+        // Direct swap
+        if (middleToken == address(0)) {
+            address[] memory path = new address[](2);
+            path[0] = fromToken;
+            path[1] = toToken;
+            router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                bestAmountIn, 
+                amountOut, 
+                path,
+                msg.sender,
+                block.timestamp
+            );
+        }
+        // Indirect swap
+        else {
+            address[] memory path = new address[](3);
+            path[0] = fromToken;
+            path[1] = middleToken;
+            path[2] = toToken;
+            router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                bestAmountIn, 
+                amountOut, 
+                path,
+                msg.sender,
+                block.timestamp
+            );
+        } 
+
+        return bestAmountIn;
     }
 
-    // fetches and sorts the reserves for a pair
-    function getReserves(address factoryAddress, address tokenA, address tokenB) internal view returns (uint reserveA, uint reserveB) {
-        (address token0,) = sortTokens(tokenA, tokenB);
-        IUniswapV2Factory factory = IUniswapV2Factory(factoryAddress);
-        IUniswapV2Pair pair = IUniswapV2Pair(factory.getPair(tokenA, tokenB));
-        (uint reserve0, uint reserve1,) = pair.getReserves();
-        (reserveA, reserveB) = tokenA == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
-    }
-
-    // returns sorted token addresses, used to handle return values from pairs sorted in this order
-    function sortTokens(address tokenA, address tokenB) internal pure returns (address token0, address token1) {
-        require(tokenA != tokenB, 'UniswapV2Library: IDENTICAL_ADDRESSES');
-        (token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-        require(token0 != address(0), 'UniswapV2Library: ZERO_ADDRESS');
+    /**
+        @dev Utility function to perform equality check on storage string and memory string
+        Read more about this design choice here:
+        https://ethereum.stackexchange.com/questions/4559/operator-not-compatible-with-type-string-storage-ref-and-literal-string
+     */
+    function sameStrings(string storage stringA, string memory stringB) internal pure returns(bool) {
+        return keccak256(abi.encode(stringA)) == keccak256(abi.encode(stringB));
     }
 }

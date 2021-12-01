@@ -13,9 +13,8 @@ async function main() {
   // manually to make sure everything is compiled
   // await hre.run('compile');
 
-  // We get the contract to deploy
   const Swapper = await hre.ethers.getContractFactory("Swapper");
-  const swapper = await Swapper.deploy("Hello, Hardhat!");
+  const swapper = await Swapper.deploy();
 
   await swapper.deployed();
 

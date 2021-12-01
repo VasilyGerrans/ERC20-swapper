@@ -1,144 +1,124 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { uid } = require("uid/secure");
 const Web3 = require("web3");
 const abi = require("./ERC20ABI.json");
 
 describe("Swapper", function () {
-  let whale, Swapper, swapper, WMATIC, WBTC, WETH, USDC;
-  const whaleAddress = "0x01aeFAC4A308FbAeD977648361fBAecFBCd380C7"; // big boy on Polygon
-  const sushiRouter = "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506";
-  const quickRouter = "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff";
-  const amount = Web3.utils.toWei("1000", "ether");
-  const amountOut = "1000"; // 0.00001 wbtc
+  let whale, 
+  Swapper, 
+  swapper,
+  WMATIC, 
+  WBTC, 
+  WETH, 
+  USDC;
 
-  beforeEach(async () => {
-    whale = await ethers.getSigner(whaleAddress);
-    
+  const whaleAddress = "0x01aeFAC4A308FbAeD977648361fBAecFBCd380C7";
+
+  before(async () => {
+    // Setup some ERC20 contracts
     WMATIC = new ethers.Contract("0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270", abi, ethers.provider);
     WBTC = new ethers.Contract("0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6", abi, ethers.provider); 
     WETH = new ethers.Contract("0x7ceb23fd6bc0add59e62ac25578270cff1b9f619", abi, ethers.provider);
     USDC = new ethers.Contract("0x2791bca1f2de4661ed88a30c99a7a9449aa84174", abi, ethers.provider);
-
+    
+    // Impersonate whale account
+    whale = await ethers.getSigner(whaleAddress);
     await hre.network.provider.request({
       method: "hardhat_impersonateAccount",
       params: [whaleAddress],
     });
     
+    // Deploy contracts as whale
     Swapper = await ethers.getContractFactory("Swapper");
-    swapper = await Swapper.connect(whale).deploy(
-      [
-        `SUSHI:WMATIC/WBTC:${uid(5)}`, 
-        `SUSHI:WMATIC/WBTC:${uid(5)}`,
-        `QUICK:WMATIC/WBTC:${uid(5)}`,
-        `QUICK:WMATIC/WBTC:${uid(5)}`
-      ], // [5-letter router name]:[from]/[to]/[5-character uid]
-      [
-        [WMATIC.address, WBTC.address],
-        [WMATIC.address, WETH.address, WBTC.address], 
-        [WMATIC.address, WBTC.address],
-        [WMATIC.address, WETH.address, WBTC.address]
-      ],
-      [sushiRouter, sushiRouter, quickRouter, quickRouter]      
-    );
+    swapper = await Swapper.connect(whale).deploy();
   });
-  
-  describe("Swapper.sol", async () => {
-    it("gets optimal path from WMATIC to WBTC", async () => {
-      const path = await swapper.getOptimalPathTo(WMATIC.address, WBTC.address, amount);
 
-      console.log("For input amount", amount, "WMATIC (18 decimals) we have chosen path", path.bestID, "with best amount out", path.bestAmountOut.toString(), "WBTC (8 decimals)");
+  const amountIn = Web3.utils.toWei("1000", "ether"); // 1000 with 18 zeroes
+  const amountOut = "1000000"; // 0.01 in WBTC (8 decimals)
 
-      const SwapPath = await swapper.SwapPathVariants(path.bestID);
-
-      console.log("More about this path:\n", SwapPath);
-
-      expect(path.bestID.toString().slice(5, -5)).to.be.equal(":WMATIC/WBTC:");
+  /**
+   * These tests are based on SushiSwap and QuickSwap liquidity as of December 1 2021.
+   */
+  describe("priceTo", async () => {
+    it("Understands that indirect swaps are best between WMATIC and WBTC", async () => {
+      const prediction = await swapper.priceTo("WMATIC", "WBTC", amountIn);
+      const [middleToken, router, bestAmountOut] = prediction.toString().split(",");
+      expect(Web3.utils.toChecksumAddress(middleToken)).to.be.oneOf([
+        Web3.utils.toChecksumAddress(WETH.address),
+        Web3.utils.toChecksumAddress(USDC.address)
+      ]);
     });
 
-    it("gets empty string for non-existent optimal path from WMATIC to USDC", async () => {
-      const path = await swapper.getOptimalPathTo(WMATIC.address, USDC.address, amount);
-
-      expect(path.bestID.toString()).to.be.equal("");
-      expect(path.bestAmountOut.toString()).to.be.equal("0");
+    it("Understands that indirect swaps are best between WMATIC and DAI", async () => {
+      const prediction = await swapper.priceTo("WMATIC", "DAI", amountIn);
+      const [middleToken, router, bestAmountOut] = prediction.toString().split(",");
+      expect(Web3.utils.toChecksumAddress(middleToken)).to.be.oneOf([
+        Web3.utils.toChecksumAddress(WETH.address),
+        Web3.utils.toChecksumAddress(USDC.address)
+      ]);    
     });
 
-    it("creates, updates, and deletes paths", async () => {
-      const newId = `SUSHI:WMATIC/WBTC:${uid(5)}`;
-      await swapper.connect(whale).addPath(
-        newId, 
-        [WMATIC.address, USDC.address, WBTC.address],
-        sushiRouter
-      );
-
-      const createdId = await swapper.SwapPathIDs(WMATIC.address, WBTC.address, 4);
-      expect(createdId).to.be.equal(newId);
-
-      const createdSwapPath = await swapper.SwapPathVariants(createdId);
-      expect(createdSwapPath.active).to.be.equal(true);
-
-      await swapper.connect(whale).deletePath(
-        WMATIC.address, WBTC.address, newId
-      );
-
-      const deletedSwapPath = await swapper.SwapPathVariants(createdId);
-      expect(deletedSwapPath.active).to.be.equal(false);
+    it("Understands that direct swap is the best option between WMATIC and USDC", async () => {
+      const prediction = await swapper.priceTo("WMATIC", "USDC", amountIn);
+      const [middleToken, router, bestAmountOut] = prediction.toString().split(",");
+      
+      /**
+       * Regex test for zero address. 
+       * See more info here: https://stackoverflow.com/questions/49937566/filter-out-empty-address-in-web3-js
+       */
+      expect(/^0x0+$/.test(middleToken)).to.be.true;
     });
+  });
 
-    it("swaps directly", async () => {
-      await WMATIC.connect(whale).approve(swapper.address, amount); 
+  describe("priceFrom", async () => {
+    it("Understands that indirect swaps are best between WMATIC and WBTC", async () => {
+      const prediction = await swapper.priceFrom("WMATIC", "WBTC", amountOut);
+      const [middleToken, router, bestAmountIn] = prediction.toString().split(",");
+
+      expect(Web3.utils.toChecksumAddress(middleToken)).to.be.oneOf([
+        Web3.utils.toChecksumAddress(WETH.address),
+        Web3.utils.toChecksumAddress(USDC.address)
+      ]);   
+    });
+  });
+
+  describe("swapTo", async () => {
+    it("Swaps the expected amounts from WMATIC to WBTC", async () => {
+      const prediction = await swapper.connect(whale).priceTo("WMATIC", "WBTC", amountIn);
+      const [middleToken, router, bestAmountOut] = prediction.toString().split(",");
+
+      await WMATIC.connect(whale).approve(swapper.address, amountIn);
 
       const initialWMATICBalance = await WMATIC.balanceOf(whaleAddress);
       const initialWBTCBalance = await WBTC.balanceOf(whaleAddress);
-
-      await swapper.connect(whale).swapByIndex(
-        sushiRouter, [WMATIC.address, WBTC.address], amount
-      );
+      
+      await swapper.connect(whale).swapTo("WMATIC", "WBTC", amountIn);
 
       const finalWMATICBalance = await WMATIC.balanceOf(whaleAddress);
       const finalWBTCBalance = await WBTC.balanceOf(whaleAddress);
 
-      expect(initialWMATICBalance.sub(finalWMATICBalance)).to.be.equal(amount);
-
-      console.log(
-        "Prior to the direct swap, the account had", 
-        initialWMATICBalance.toString(), 
-        "WMATIC and",
-        initialWBTCBalance.toString(), 
-        "WBTC. After the direct swap, the account had",
-        finalWMATICBalance.toString(), 
-        "WMATIC and",
-        finalWBTCBalance.toString(),
-        "WBTC."
-      );
+      expect(finalWBTCBalance.sub(initialWBTCBalance).toString()).to.be.equal(bestAmountOut);
+      expect(initialWMATICBalance.sub(finalWMATICBalance).toString()).to.be.equal(amountIn);
     });
+  });
 
-    it("gets optimal input for WMATIC to WBTC", async () => {
-      const path = await swapper.getOptimalPathFrom(WMATIC.address, WBTC.address, amountOut);
+  describe("swapFrom", async () => {
+    it("Swaps the expected amounts from WMATIC to WBTC", async () => {
+      const prediction = await swapper.connect(whale).priceFrom("WMATIC", "WBTC", amountOut);
+      const [middleToken, router, bestAmountIn] = prediction.toString().split(","); 
+
+      await WMATIC.connect(whale).approve(swapper.address, bestAmountIn);
+
+      const initialWMATICBalance = await WMATIC.balanceOf(whaleAddress);
+      const initialWBTCBalance = await WBTC.balanceOf(whaleAddress);
       
-      console.log(
-        "The optimal input to get", 
-        amountOut, 
-        "WBTC (8 decimals) is calculated to be", 
-        path.bestAmountIn.toString(),
-        "WMATIC (18 decimals)"
-      );
-      console.log("More information about the chosen path:\n", path);
-    });
-    
-    it("leaves no remaining funds in the swapper contract", async () => {
-      await WMATIC.connect(whale).approve(swapper.address, amount);
-      await swapper.connect(whale).swapTo(
-        WMATIC.address,
-        WBTC.address,
-        amount
-      );
-    
-      const finalSwapperWMATICBalance = await WMATIC.balanceOf(swapper.address);
-      const finalSwapperWBTCBalance = await WBTC.balanceOf(swapper.address);
-    
-      expect(finalSwapperWMATICBalance.toString()).to.be.equal("0");
-      expect(finalSwapperWBTCBalance.toString()).to.be.equal("0");
+      await swapper.connect(whale).swapTo("WMATIC", "WBTC", bestAmountIn);
+
+      const finalWMATICBalance = await WMATIC.balanceOf(whaleAddress);
+      const finalWBTCBalance = await WBTC.balanceOf(whaleAddress);
+
+      expect(finalWBTCBalance.sub(initialWBTCBalance).toString()).to.be.equal(amountOut);
+      expect(initialWMATICBalance.sub(finalWMATICBalance).toString()).to.be.equal(bestAmountIn); 
     });
   });
 });
