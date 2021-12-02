@@ -49,9 +49,9 @@ contract Swapper is ISwapper, Ownable {
         middleTokens.push(_name);
     }
 
-    function removeMiddleToken(string memory name) public onlyOwner {
+    function removeMiddleToken(string memory _name) public onlyOwner {
         for (uint8 i = 0; i < middleTokens.length; i++) {
-            if (sameStrings(middleTokens[i], name)) {
+            if (sameStrings(middleTokens[i], _name)) {
                 for (uint8 j = i; j < middleTokens.length - 1; j++) {
                     middleTokens[j] = middleTokens[j + 1];
                 }
@@ -61,6 +61,15 @@ contract Swapper is ISwapper, Ownable {
         }
     }
 
+    /**
+        @notice Finds optimal way to swap two ERC20's using our existing middleTokens and 
+        routers.
+        @param from is the string symbol of the input ERC20.
+        @param to is the string symbol for the output ERC20.
+        @param amountIn is the amount of input ERC20 supplied.
+        @return middleToken is address(0) if direct swap is optimal and ERC20 of token
+        through which we build the path.
+     */
     function priceTo(
         string memory from,
         string memory to,
@@ -73,11 +82,11 @@ contract Swapper is ISwapper, Ownable {
         address fromToken = tokenLibrary.getToken(from);
         address toToken = tokenLibrary.getToken(to);
 
-        // Setting SushiSwap direct default
         address[] memory path = new address[](2);
         path[0] = fromToken;
         path[1] = toToken;
         
+        // Setting SushiSwap direct default
         uint256[] memory amountsOut = sushiSwap.getAmountsOut(amountIn, path);
         bestAmountOut = amountsOut[amountsOut.length - 1];
         router = sushiSwap;
@@ -117,6 +126,15 @@ contract Swapper is ISwapper, Ownable {
         }
     }
 
+    /**
+        @notice Finds optimal way to swap two ERC20's using our existing middleTokens and 
+        routers.
+        @param from is the string symbol of the input ERC20.
+        @param to is the string symbol for the output ERC20.
+        @param amountOut is the amount of output ERC20 desired.
+        @return middleToken is address(0) if direct swap is optimal and ERC20 of token
+        through which we build the path.
+     */
     function priceFrom(
         string memory from,
         string memory to,
@@ -129,22 +147,27 @@ contract Swapper is ISwapper, Ownable {
         address fromToken = tokenLibrary.getToken(from);
         address toToken = tokenLibrary.getToken(to);
 
-        // Setting SushiSwap direct default
         address[] memory path = new address[](2);
         path[0] = fromToken;
         path[1] = toToken;
-        
-        uint256[] memory amountsIn = sushiSwap.getAmountsIn(amountOut, path);
-        bestAmountIn = amountsIn[0];
-        router = sushiSwap;
+
+        // Making the default unreasonably large, so we can only decrease it
+        bestAmountIn = type(uint256).max;      
+
+        // Checking SushiSwap direct
+        try sushiSwap.getAmountsIn(amountOut, path) returns(uint256[] memory amountsIn) {
+            bestAmountIn = amountsIn[0];
+            router = sushiSwap;
+        } catch {}
 
         // Checking QuickSwap direct
-        amountsIn = quickSwap.getAmountsIn(amountOut, path);
-        uint256 newAmountOut = amountsIn[0]; 
-        if (newAmountOut < bestAmountIn) {
-            bestAmountIn = newAmountOut;
-            router = quickSwap;
-        }
+        try quickSwap.getAmountsIn(amountOut, path) returns(uint256[] memory amountsIn) {
+            uint256 newAmountOut = amountsIn[0]; 
+            if (newAmountOut < bestAmountIn) {
+                bestAmountIn = newAmountOut;
+                router = quickSwap;
+            }
+        } catch {}
 
         // Checking indirect
         for (uint8 i = 0; i < middleTokens.length; i++) {
@@ -154,23 +177,27 @@ contract Swapper is ISwapper, Ownable {
                 path[1] = tokenLibrary.getToken(middleTokens[i]);
                 path[2] = toToken;
 
-                amountsIn = sushiSwap.getAmountsIn(amountOut, path);
-                newAmountOut = amountsIn[0]; 
-                if (newAmountOut < bestAmountIn) {
-                    bestAmountIn = newAmountOut;
-                    middleToken = tokenLibrary.getToken(middleTokens[i]);
-                    router = sushiSwap;
-                }
+                try sushiSwap.getAmountsIn(amountOut, path) returns(uint256[] memory amountsIn) {
+                    uint256 newAmountOut = amountsIn[0]; 
+                    if (newAmountOut < bestAmountIn) {
+                        bestAmountIn = newAmountOut;
+                        middleToken = tokenLibrary.getToken(middleTokens[i]);
+                        router = sushiSwap;
+                    }
+                } catch {}
 
-                amountsIn = quickSwap.getAmountsIn(amountOut, path);
-                newAmountOut = amountsIn[0]; 
-                if (newAmountOut < bestAmountIn) {
-                    bestAmountIn = newAmountOut;
-                    middleToken = tokenLibrary.getToken(middleTokens[i]);
-                    router = quickSwap;
-                }
+                try quickSwap.getAmountsIn(amountOut, path) returns(uint256[] memory amountsIn) {
+                    uint256 newAmountOut = amountsIn[0]; 
+                    if (newAmountOut < bestAmountIn) {
+                        bestAmountIn = newAmountOut;
+                        middleToken = tokenLibrary.getToken(middleTokens[i]);
+                        router = quickSwap;
+                    }
+                } catch {}
             }
         } 
+
+        require(bestAmountIn < type(uint256).max, "Swapper: no option with sufficient liquidity found");
     }
 
     /**
@@ -276,7 +303,7 @@ contract Swapper is ISwapper, Ownable {
     }
 
     /**
-        @dev Utility function to perform equality check on storage string and memory string
+        @dev Utility function to perform equality check on storage string and memory string.
         Read more about this design choice here:
         https://ethereum.stackexchange.com/questions/4559/operator-not-compatible-with-type-string-storage-ref-and-literal-string
      */

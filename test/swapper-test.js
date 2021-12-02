@@ -34,7 +34,7 @@ describe("Swapper", function () {
   });
 
   const amountIn = Web3.utils.toWei("1000", "ether"); // 1000 with 18 zeroes
-  const amountOut = "1000000"; // 0.01 in WBTC (8 decimals)
+  const amountOut = "1000000000"; // 10 in WBTC (8 decimals)
 
   /**
    * These tests are based on SushiSwap and QuickSwap liquidity as of December 1 2021.
@@ -79,6 +79,10 @@ describe("Swapper", function () {
         Web3.utils.toChecksumAddress(WETH.address),
         Web3.utils.toChecksumAddress(USDC.address)
       ]);   
+    });
+
+    it("Reverts on unrealistic liquidity requirements (1,000,000 WBTC output)", async () => {
+      await expect(swapper.priceFrom("WMATIC", "WBTC", "100000000000000000")).to.be.revertedWith("Swapper: no option with sufficient liquidity found");
     });
   });
 

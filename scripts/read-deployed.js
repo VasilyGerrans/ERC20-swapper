@@ -8,11 +8,15 @@ const amountIn = Web3.utils.toWei("1", "ether");
  */
 async function main() {
     const Swapper = await ethers.getContractFactory("Swapper");
-    const swapper = await Swapper.attach("0xCa8059F012793393EBf4F1d6191B94D3B96534A4");
+    const swapper = await Swapper.attach("0x2f8ff2011d7494D251dacC3bD2802E48F090D03c");
 
     const response = await swapper.priceTo("WMATIC", "WBTC", amountIn);
 
     console.log(response.bestAmountOut.toString());
+
+    const fromResponse = await swapper.priceFrom("WMATIC", "WBTC", "47715441855");
+
+    console.log(fromResponse);
 }
 
 main()
