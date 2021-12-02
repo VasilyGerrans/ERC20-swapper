@@ -5,7 +5,7 @@ import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./ISwapper.sol";
-import "./TokenLibrary.sol";
+import "./ITokenLibrary.sol";
 
 contract Swapper is ISwapper, Ownable {
     /**
@@ -27,8 +27,8 @@ contract Swapper is ISwapper, Ownable {
      */ 
     ITokenLibrary public tokenLibrary;
 
-    constructor() {
-        tokenLibrary = new TokenLibrary();
+    constructor(address _library) {
+        tokenLibrary = ITokenLibrary(_library);
 
         // Inlcude two most common middle tokens for QuickSwap
         middleTokens.push("WETH");
@@ -62,7 +62,7 @@ contract Swapper is ISwapper, Ownable {
     }
 
     /**
-        @notice Finds optimal way to swap two ERC20's using our existing middleTokens and 
+        @notice Finds optimal way to swap two ERC20s using our existing middleTokens and 
         routers.
         @param from is the string symbol of the input ERC20.
         @param to is the string symbol for the output ERC20.
@@ -127,7 +127,7 @@ contract Swapper is ISwapper, Ownable {
     }
 
     /**
-        @notice Finds optimal way to swap two ERC20's using our existing middleTokens and 
+        @notice Finds optimal way to swap two ERC20s using our existing middleTokens and 
         routers.
         @param from is the string symbol of the input ERC20.
         @param to is the string symbol for the output ERC20.

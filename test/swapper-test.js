@@ -5,6 +5,8 @@ const abi = require("./ERC20ABI.json");
 
 describe("Swapper", function () {
   let whale, 
+  TokenLibrary,
+  tokenLibrary,
   Swapper, 
   swapper,
   WMATIC, 
@@ -29,8 +31,11 @@ describe("Swapper", function () {
     });
     
     // Deploy contracts as whale
+    TokenLibrary = await ethers.getContractFactory("TokenLibrary");
+    tokenLibrary = await TokenLibrary.connect(whale).deploy();
+
     Swapper = await ethers.getContractFactory("Swapper");
-    swapper = await Swapper.connect(whale).deploy();
+    swapper = await Swapper.connect(whale).deploy(tokenLibrary.address);
   });
 
   const amountIn = Web3.utils.toWei("1000", "ether"); // 1000 with 18 zeroes
